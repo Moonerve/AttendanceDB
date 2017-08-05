@@ -1,0 +1,359 @@
+Imports System.Data.OleDb
+Imports Microsoft.Office.Interop
+Public Class FrmMainWindows
+
+    Dim dt, dtEnNo, dtName As DataTable
+    Dim cn As OleDbConnection
+    Dim path As IO.FileInfo
+
+
+    Public Shared Sub main()
+        '显示登录对话框
+        Dim loginFrm As FrmLogin = New FrmLogin
+        loginFrm.ShowDialog()
+        '合法进入系统
+        If loginFrm.bResult = True Then
+            Dim frm As FrmMainWindows = New FrmMainWindows
+            Application.Run(FrmMainWindows)
+        End If
+
+    End Sub
+
+
+
+    Private Sub Button1_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button1.Click
+        Try
+            If OpenFileDialog1.ShowDialog = Windows.Forms.DialogResult.OK Then
+                '初始化dt
+                dt = New DataTable
+                Dim da As OleDbDataAdapter
+
+                path = New IO.FileInfo(OpenFileDialog1.FileName)
+                Dim cnstr = "Provider=Microsoft.Jet.OLEDB.4.0;Data Source=" + path.DirectoryName + ";Extended Properties=""text;HDR=true;FMT=Delimited"""
+
+                '【HDR】表示要把第一行作为数据还是作为列名,作为数据用HDR=no,作为列名用HDR=yes
+                '通过Imex=1来把混合型作为文本型读取,避免 null值
+                cn = New OleDbConnection(cnstr)
+                'Dim sql As String = "select * from " + path  显示全部数据
+                '####显示规定时间段内的数据
+                Dim sql As String = "SELECT * FROM " + path.FullName + " WHERE DateTime > " + ((DateTimePicker1.Value - DateSerial(1900, 1, 1)).Days + 2).ToString + " and DateTime<" + ((DateTimePicker2.Value - DateSerial(1900, 1, 1)).Days + 3).ToString '+ " and EnNo=" + ComboBoxEnNo.SelectedValue.ToString
+
+                cn.Open()
+                da = New OleDbDataAdapter(sql, cn)
+                da.Fill(dt)
+
+                '判断数据源是否有效
+                If dt.Columns.Count > 7 Then
+                    MsgBox("亲，导入数据不符合要求， 原因：列数 大于 7")
+                    Exit Sub
+                End If
+
+                dtaddtime()
+
+                'datagridview 刷新
+                DataGridView1.Columns.Clear()
+                DataGridView1.DataSource = dt
+                'DBname()
+                ' DBEnNo()
+
+                '  dtEnNOAnalysis()
+            End If
+
+        Catch ex As Exception
+            MsgBox(ex.Message)
+        End Try
+    End Sub
+
+#Region "Method"
+    Sub DBEnNo()
+        dtEnNo = New DataTable
+        Dim da As OleDbDataAdapter
+        Dim sql As String = "SELECT DISTINCT EnNo FROM " + path.FullName
+        If cn.State = ConnectionState.Closed Then
+            cn.Open()
+        End If
+
+        da = New OleDbDataAdapter(sql, cn)
+        da.Fill(dtEnNo)
+
+        ComboBoxEnNo.DataSource = dtEnNo
+        ComboBoxEnNo.ValueMember = "EnNo"
+        ComboBoxEnNo.DisplayMember = "EnNo"
+
+    End Sub
+    Sub DBname()
+        dtName = New DataTable
+        Dim da As OleDbDataAdapter
+        Dim sql As String = "SELECT DISTINCT Name FROM " + path.FullName
+        If cn.State = ConnectionState.Closed Then
+            cn.Open()
+        End If
+
+        da = New OleDbDataAdapter(sql, cn)
+        da.Fill(dtName)
+
+
+        ComboBoxName.DataSource = dtName
+        ComboBoxName.ValueMember = "Name"
+        ComboBoxName.DisplayMember = "Name"
+
+    End Sub
+    Sub dtaddtime()  ' dt 添加两列 日期 和时间
+        dt.Columns.Add("DateStr")
+        dt.Columns.Add("TimeStr")
+        For i = 0 To dt.Rows.Count - 1
+
+
+            dt.Rows(i).Item("DateStr") = (dt.Rows(i).Item("DateTime")).ToLongDateString
+            dt.Rows(i).Item("TimeStr") = (dt.Rows(i).Item("DateTime")).ToLongTimeString
+        Next
+    End Sub
+
+    Sub dtEnNOAnalysis()
+        Dim dtAnalysis As New DataTable
+
+        dtAnalysis.Columns.Add("日期")
+        dtAnalysis.Columns.Add("工号")
+        dtAnalysis.Columns.Add("上班时间")
+        dtAnalysis.Columns.Add("下班时间")
+        dtAnalysis.Columns.Add("考勤")
+
+        For j = 1 To dtEnNo.Rows.Count
+            'dtAnalysis.Rows.Add(CInt((DateTimePicker2.Value - DateTimePicker1.Value).Days))
+            dtAnalysis.Rows.Add()
+            dtAnalysis.Rows.Add()
+
+            For i = 0 To CInt((DateTimePicker2.Value - DateTimePicker1.Value).Days)
+                dtAnalysis.Rows.Add()
+                dtAnalysis.Rows.Add()
+                dtAnalysis.Rows(i * j).Item("日期") = DateTimePicker1.Value.AddDays(i).ToLongDateString
+                dtAnalysis.Rows(i * j).Item("工号") = dtEnNo.Rows(j).Item("EnNo")
+
+            Next
+            'dt.Rows(i).Item("TimeStr") = (dt.Rows(i).Item("DateTime")).ToLongTimeString
+        Next
+        DataGridView1.DataSource = dtAnalysis
+    End Sub
+
+    Public Function SDEResearch(ByVal InputDT As DataTable, ByVal SearchStr As String, ByVal ColName As String) As DataTable
+        '用来存储再查询后的数据表 
+        Dim ReSearchDT As DataTable = InputDT.Clone() '保证有与源数据表相同的表结构 
+        '用来存储查询后返回的datarow数组 
+        Dim ReSearchDR() As DataRow = Nothing
+        Try
+            ReSearchDR = InputDT.Select(ColName + " LIKE '%" + SearchStr + "%'") '只是从数据表中映射出来datarow()，所以不能删除原表中的行 
+        Catch ex As Exception
+            Return Nothing
+        End Try
+        For i As Int16 = 0 To ReSearchDR.Length - 1
+            ReSearchDT.ImportRow(ReSearchDR(i))
+        Next
+        Return ReSearchDT
+    End Function
+
+
+    ' 创建日期列
+    Function datecol(ByVal date1 As Date, ByVal date2 As Date, ByVal dtsearch As DataTable) As DataTable
+        Dim i As Int16 = 0
+        Do While date1 < date2
+            dtsearch.Columns.Add(date1.ToLongDateString + "入门")
+            dtsearch.Columns.Add(date1.ToLongDateString + "出门")
+            date1 = date1.AddDays(1)
+        Loop
+        dtsearch.Columns.Add(date1.ToLongDateString + "入门")
+        dtsearch.Columns.Add(date1.ToLongDateString + "出门")
+        Return dtsearch
+    End Function
+    ' 创建日期列
+    Function datecol1(ByVal date1 As Date, ByVal date2 As Date, ByVal dtsearch As DataTable) As DataTable
+        Dim i As Int16 = 0
+        Do While date1 < date2
+            dtsearch.Columns.Add(date1.ToLongDateString)
+            date1 = date1.AddDays(1)
+        Loop
+        dtsearch.Columns.Add(date1.ToLongDateString)
+        Return dtsearch
+    End Function
+#End Region
+
+
+    '导出excel
+
+
+#Region "Event"
+    Private Sub ComboBoxEnNo_SelectionChangeCommitted(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ComboBoxEnNo.SelectionChangeCommitted
+        'dt = New DataTable
+        'Dim da As OleDbDataAdapter
+        'Dim sql As String = "SELECT * FROM " + path + " where EnNo=" + ComboBoxEnNo.SelectedValue.ToString
+        'If cn.State = ConnectionState.Closed Then
+        '    cn.Open()
+        'End If
+
+        'da = New OleDbDataAdapter(sql, cn)
+        'da.Fill(dt)
+
+        'DataGridView1.Columns.Clear()
+        'DataGridView1.DataSource = dt
+        ' ComboBoxName.SelectedIndex = ComboBoxEnNo.SelectedIndex
+    End Sub
+    Private Sub FrmMain_Load(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles MyBase.Load
+        DateTimePicker1.Value = Now.AddMonths(-2)
+    End Sub
+
+#End Region
+
+
+
+
+    Private Sub BtnSearch_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles BtnSearch.Click
+        dt = New DataTable
+        Dim da As OleDbDataAdapter
+
+        Dim sql As String = "SELECT * FROM " + path.FullName + " WHERE DateTime > " + ((DateTimePicker1.Value - DateSerial(1900, 1, 1)).Days + 2).ToString + " and DateTime<" + ((DateTimePicker2.Value - DateSerial(1900, 1, 1)).Days + 3).ToString '+ " and EnNo=" + ComboBoxEnNo.SelectedValue.ToString
+
+        If cn.State = ConnectionState.Closed Then
+            cn.Open()
+        End If
+
+        da = New OleDbDataAdapter(sql, cn)
+        da.Fill(dt)
+
+        Dim expression As String
+        expression = "EnNo =" + ComboBoxEnNo.SelectedValue.ToString
+        dt.Select(expression, "EnNo")
+        DataGridView1.Columns.Clear()
+        DataGridView1.DataSource = dt
+    End Sub
+
+    Private Sub Button2_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button2.Click
+        '用来存储再查询后的数据表 
+        Dim ReSearchDT As DataTable = dt.Clone  '保证有与源数据表相同的表结构
+        '用来存储查询后返回的datarow数组 
+        Dim ReSearchDR() As DataRow = Nothing
+
+        '方法1：Select + Like 语句
+        ReSearchDR = dt.Select("EnNo >100") '只是从数据表中映射出来datarow()，所以不能删除原表中的行     
+
+        For i As Int16 = 0 To ReSearchDR.Length - 1
+            ReSearchDT.ImportRow(ReSearchDR(i))
+        Next
+
+
+        DataGridView1.DataSource = ReSearchDT
+    End Sub
+
+    Private Sub Button3_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button3.Click
+        dt = New DataTable
+        Dim da As OleDbDataAdapter
+        Dim cnstr = "Provider=Microsoft.Jet.OLEDB.4.0;Data Source=" + path.DirectoryName + ";Extended Properties=""text;HDR=true;FMT=Delimited"""
+        cn = New OleDbConnection(cnstr)
+        'Dim sql As String = "select * from " + path  显示全部数据
+        Dim sql As String = "SELECT * FROM " + path.FullName + " WHERE DateTime > " + ((DateTimePicker1.Value - DateSerial(1900, 1, 1)).Days + 2).ToString + " and DateTime<" + ((DateTimePicker2.Value - DateSerial(1900, 1, 1)).Days + 3).ToString '+ " and EnNo=" + ComboBoxEnNo.SelectedValue.ToString
+        cn.Open()
+        da = New OleDbDataAdapter(sql, cn)
+        da.Fill(dt)
+        dtaddtime()
+        Dim dataview As DataView
+        dataview = dt.DefaultView
+
+
+        Dim dtnow As DataTable
+        dtnow = dataview.ToTable(True, "EnNo", "Name")
+        dtnow = datecol(DateTimePicker1.Value, DateTimePicker2.Value, dtnow)
+
+        For i = 2 To dtnow.Columns.Count - 2 Step 2
+            For j = 0 To dtnow.Rows.Count - 1
+                dtnow.Rows(j).Item(i) = dt.Compute("max(TimeStr)", "EnNo=" + "'" + dtnow.Rows(j).Item(0).ToString + "'" + " and DateStr = " + "'" + dtnow.Columns(i).Caption.Replace("入门", "") + "'")
+                dtnow.Rows(j).Item(i + 1) = dt.Compute("min(TimeStr)", "EnNo=" + "'" + dtnow.Rows(j).Item(0).ToString + "'" + " and DateStr = " + "'" + dtnow.Columns(i).Caption.Replace("入门", "") + "'")
+            Next
+        Next
+        DataGridView1.DataSource = dtnow
+
+        '设置列样式
+        'For i = 2 To dtnow.Columns.Count - 2 Step 1
+        '    If Convert.ToDateTime(DataGridView1.Columns(i).Name).DayOfWeek = DayOfWeek.Saturday Or Convert.ToDateTime(DataGridView1.Columns(i).Name).DayOfWeek = DayOfWeek.Sunday Then
+        '        DataGridView1.Columns(i).DefaultCellStyle.BackColor = Color.AliceBlue
+        '    End If
+
+        'Next
+
+    End Sub
+
+
+
+
+
+    Private Sub Button4_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button4.Click
+        Dim MyExcel As New Microsoft.Office.Interop.Excel.Application()
+        MyExcel.Application.Workbooks.Add()
+        MyExcel.Visible = True
+
+        '获取标题  
+        Dim Cols As Integer
+        For Cols = 1 To DataGridView1.Columns.Count
+            MyExcel.Cells(1, Cols) = DataGridView1.Columns(Cols - 1).HeaderText
+        Next
+
+        '往excel表里添加数据()  
+        Dim i As Integer
+        Dim j As Integer
+        For i = 0 To DataGridView1.RowCount - 2
+            For j = 0 To DataGridView1.ColumnCount - 1
+                If Me.DataGridView1(j, i).Value Is System.DBNull.Value Then
+
+                    MyExcel.Cells(i + 2, j + 1) = ""
+                Else
+                    MyExcel.Cells(i + 2, j + 1) = DataGridView1(j, i).Value.ToString
+
+                End If
+            Next
+        Next
+
+    End Sub
+
+    Private Sub Button5_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button5.Click
+        dt = New DataTable
+        Dim da As OleDbDataAdapter
+        Dim cnstr = "Provider=Microsoft.Jet.OLEDB.4.0;Data Source=" + path.DirectoryName + ";Extended Properties=""text;HDR=true;FMT=Delimited"""
+        cn = New OleDbConnection(cnstr)
+        'Dim sql As String = "select * from " + path  显示全部数据
+        Dim sql As String = "SELECT * FROM " + path.FullName + " WHERE DateTime > " + ((DateTimePicker1.Value - DateSerial(1900, 1, 1)).Days + 2).ToString + " and DateTime<" + ((DateTimePicker2.Value - DateSerial(1900, 1, 1)).Days + 3).ToString '+ " and EnNo=" + ComboBoxEnNo.SelectedValue.ToString
+        cn.Open()
+        da = New OleDbDataAdapter(sql, cn)
+        da.Fill(dt)
+        dtaddtime()
+        Dim dataview As DataView
+        dataview = dt.DefaultView
+
+
+        Dim dtnow As DataTable
+        dtnow = dataview.ToTable(True, "EnNo", "Name")
+        dtnow = datecol1(DateTimePicker1.Value, DateTimePicker2.Value, dtnow)
+
+
+
+        Dim dtold As DataTable
+        dtold = dtnow.Clone
+
+
+        For j = 0 To dtnow.Rows.Count - 1
+            dtold.Rows.Add()
+            dtold.Rows.Add()
+            dtold.Rows(2 * j).Item(0) = dtnow.Rows(j).Item(0)
+            dtold.Rows(2 * j + 1).Item(0) = dtnow.Rows(j).Item(0)
+            dtold.Rows(2 * j).Item(1) = dtnow.Rows(j).Item(1)
+            dtold.Rows(2 * j + 1).Item(1) = dtnow.Rows(j).Item(1)
+        Next
+        For i = 2 To dtold.Columns.Count - 2 Step 1
+            For j = 0 To dtold.Rows.Count - 1 Step 2
+                Try
+                    dtold.Rows(j).Item(i) = dt.Compute("max(TimeStr)", "EnNo=" + "'" + dtold.Rows(j).Item(0).ToString + "'" + " and DateStr = " + "'" + dtold.Columns(i).Caption + "'")
+                    dtold.Rows(j + 1).Item(i) = dt.Compute("min(TimeStr)", "EnNo=" + "'" + dtold.Rows(j).Item(0).ToString + "'" + " and DateStr = " + "'" + dtold.Columns(i).Caption + "'")
+                Catch ex As Exception
+                End Try
+            Next
+        Next
+        DataGridView1.DataSource = dtold
+    End Sub
+ 
+End Class
